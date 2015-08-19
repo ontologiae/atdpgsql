@@ -36,11 +36,8 @@ let to_class_name str =
     | "float"  -> "Double"
     | _ -> to_camel_case str
 
-let java_keywords = [
-  "abstract";
-  "assert";
+let pgsql_keywords = [
   "boolean";
-  "break";
   "byte";
   "case";
   "catch";
@@ -56,75 +53,62 @@ let java_keywords = [
   "extends";
   "final";
   "finally";
-  "float";
+  "real";
   "for";
-  "goto";
   "if";
-  "implements";
-  "import";
-  "instanceof";
   "int";
-  "interface";
-  "long";
-  "native";
-  "new";
+  "integer";
+  "bigin";
   "package";
   "private";
   "protected";
   "public";
-  "return";
+  "returning";
   "short";
-  "static";
-  "strictfp";
   "super";
   "switch";
-  "synchronized";
-  "this";
-  "throw";
-  "throws";
   "transient";
   "try";
-  "void";
-  "volatile";
+  "when";
   "while";
 ]
 
-let is_java_keyword =
+let is_pgsql_keyword =
   let tbl = Hashtbl.create 200 in
-  List.iter (fun k -> Hashtbl.add tbl k ()) java_keywords;
+  List.iter (fun k -> Hashtbl.add tbl k ()) pgsql_keywords;
   fun k -> Hashtbl.mem tbl k
 
 (*
    Automatically append an underscore to a field name if it is a Java keyword.
-   Use the alternative provided as <java name ="..."> if available.
+   Use the alternative provided as <pgsql name ="..."> if available.
 
    ATD field                           Java name
 
    not_a_keyword                       not_a_keyword
    class                               class_
-   class <java name="class_name">      class_name
-   not_a_keyword <java name="class">   class
+   class <pgsql name="class_name">      class_name
+   not_a_keyword <pgsql name="class">   class
 
 *)
-let get_java_field_name field_name annot =
+let get_pgsql_field_name field_name annot =
   let field_name =
-    if is_java_keyword field_name then
+    if is_pgsql_keyword field_name then
       field_name ^ "_"
     else
       field_name
   in
-  Atd_annot.get_field (fun s -> Some s) field_name ["java"] "name" annot
+  Atd_annot.get_field (fun s -> Some s) field_name ["pgsql"] "name" annot
 
-let get_java_variant_names field_name annot =
+let get_pgsql_variant_names field_name annot =
   let lower_field_name = String.lowercase field_name in
   let field_name =
-    if is_java_keyword lower_field_name then
+    if is_pgsql_keyword lower_field_name then
       field_name ^ "_"
     else
       field_name
   in
   let field_name =
-    Atd_annot.get_field (fun s -> Some s) field_name ["java"] "name" annot
+    Atd_annot.get_field (fun s -> Some s) field_name ["pgsql"] "name" annot
   in
   let func_name = to_camel_case field_name in
   let enum_name = String.uppercase field_name in

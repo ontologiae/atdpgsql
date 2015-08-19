@@ -19,13 +19,13 @@ let json_of_atd env atd_ty =
   match atd_ty with
     | `Sum    _ -> "" (* Either a String or a two element JSONArray *)
     | `Record _ -> "JSONObject"
-    | `List   _ -> "JSONArray"
+    | `List   _ -> "[]"
     | `Name (_, (_, ty, _), _) ->
         (match ty with
-           | "bool"   -> "boolean"
-           | "int"    -> "int"
-           | "float"  -> "double"
-           | "string" -> "String"
+           | "bool"   -> "Boolean"
+           | "int"    -> "Bigint"
+           | "float"  -> "Double precision"
+           | "string" -> "Text"
            | _        -> assert false
         )
     | x -> type_not_supported x
@@ -52,19 +52,19 @@ extract_from_edgy_brackets "ab<cd<e>>f";;
 *)
 
 (* Assignment with translation.  Suppose that atd_ty is an ATD type, with
- * corresponding Java and (Javafied) JSON types java_ty and json_ty. Then this
- * function assigns to a variable `dst' of type java_ty from a variable `src' of
+ * corresponding Java and (Javafied) JSON types pgsql_ty and json_ty. Then this
+ * function assigns to a variable `dst' of type pgsql_ty from a variable `src' of
  * type `json_ty'.
  *)
-let rec assign env opt_dst src java_ty atd_ty indent =
+let rec assign env opt_dst src pgsql_ty atd_ty indent =
   let atd_ty = norm_ty env atd_ty in
   match opt_dst with
   | None ->
       (match atd_ty with
        | `Sum _ ->
-           sprintf "new %s(%s)" java_ty src
+           sprintf "new %s(%s)" pgsql_ty src
        | `Record _ ->
-           sprintf "new %s(%s)" java_ty src
+           sprintf "new %s(%s)" pgsql_ty src
        | `Name (_, (_, ty, _), _) ->
            (match ty with
             | "bool" | "int" | "float" | "string" -> src
@@ -75,14 +75,14 @@ let rec assign env opt_dst src java_ty atd_ty indent =
   | Some dst ->
       (match atd_ty with
        | `Sum _ ->
-           sprintf "%s%s = new %s(%s);\n" indent dst java_ty src
+           sprintf "%s%s = new %s(%s);\n" indent dst pgsql_ty src
        | `Record _ ->
-           sprintf "%s%s = new %s(%s);\n" indent dst java_ty src
+           sprintf "%s%s = new %s(%s);\n" indent dst pgsql_ty src
        | `List (_, sub_ty, _) ->
-           let java_sub_ty = (*ahem*) extract_from_edgy_brackets java_ty in
-           let sub_expr = assign env None "_tmp" java_sub_ty sub_ty "" in
+           let pgsql_sub_ty = (*ahem*) extract_from_edgy_brackets pgsql_ty in
+           let sub_expr = assign env None "_tmp" pgsql_sub_ty sub_ty "" in
 
-           sprintf "%s%s = new %s();\n" indent dst java_ty
+           sprintf "%s%s = new %s();\n" indent dst pgsql_ty
            ^ sprintf "%sfor (int _i = 0; _i < %s.length(); ++_i) {\n" indent src
 
            ^ sprintf "%s  %s _tmp = %s.%s(_i);\n" indent
@@ -128,9 +128,9 @@ let rec assign env opt_dst src java_ty atd_ty indent =
  * then we wrap its values as necessary.
  *)
 let assign_field env
-    (`Field (loc, (atd_field_name, kind, annots), atd_ty)) java_ty =
+    (`Field (loc, (atd_field_name, kind, annots), atd_ty)) pgsql_ty =
   let json_field_name = get_json_field_name atd_field_name annots in
-  let field_name = get_java_field_name atd_field_name annots in
+  let field_name = get_pgsql_field_name atd_field_name annots in
   (* Check whether the field is optional *)
   let is_opt =
     match kind with
@@ -138,7 +138,7 @@ let assign_field env
       | `Required -> false in
   let src = sprintf "jo.%s(\"%s\")" (get env atd_ty is_opt) json_field_name in
   if not is_opt then
-    assign env (Some field_name) src java_ty atd_ty "    "
+    assign env (Some field_name) src pgsql_ty atd_ty "    "
   else
     let mk_else = function
       | Some default ->
@@ -160,8 +160,8 @@ let assign_field env
                 | _ -> mk_else None (* TODO: fail if no default is provided *)
                )
            | `List _ ->
-               (* java_ty is supposed to be of the form "ArrayList<...>" *)
-               mk_else (Some (sprintf "new %s()" java_ty))
+               (* pgsql_ty is supposed to be of the form "ArrayList<...>" *)
+               mk_else (Some (sprintf "new %s()" pgsql_ty))
            | _ ->
                mk_else None (* TODO: fail if no default is provided *)
           )
@@ -170,7 +170,7 @@ let assign_field env
     in
     let atd_ty = norm_ty ~unwrap_option:true env atd_ty in
     sprintf "    if (jo.has(\"%s\")) {\n" json_field_name
-    ^ assign env (Some field_name) src java_ty atd_ty "      "
+    ^ assign env (Some field_name) src pgsql_ty atd_ty "      "
     ^ opt_set_default
 
 
@@ -200,7 +200,7 @@ let rec to_string env id atd_ty indent =
 let to_string_field env = function
   | (`Field (loc, (atd_field_name, kind, annots), atd_ty)) ->
       let json_field_name = get_json_field_name atd_field_name annots in
-      let field_name = get_java_field_name atd_field_name annots in
+      let field_name = get_pgsql_field_name atd_field_name annots in
       let atd_ty = norm_ty ~unwrap_option:true env atd_ty in
       (* In the case of an optional field, create a predicate to test whether
        * the field has its default value. *)
@@ -234,8 +234,8 @@ let to_string_field env = function
       in
       if_part ^ else_part
 
-(* Generate a javadoc comment *)
-let javadoc loc annots indent =
+(* Generate a pgsqldoc comment *)
+let pgsqldoc loc annots indent =
   let from_inline_text text = indent ^ " * " ^ text ^ "\n" in
   (* Assume that code is the name of a field that is defined
      in the same class *)
@@ -293,14 +293,10 @@ let javadoc loc annots indent =
  *)
 
 let open_class env cname =
-  let out = open_out (env.package_dir ^ "/" ^ cname ^ ".java") in
+  let out = open_out (env.package_dir ^ "/" ^ cname ^ ".pgsql") in
   fprintf out "\
-// Automatically generated; do not edit
-package %s;
-import org.json.*;
-
-"
-    env.package;
+// Entête génération SQL
+";
   out
 
 let rec trans_module env items = List.fold_left trans_outer env items
@@ -320,8 +316,8 @@ and trans_outer env (`Type (_, (name, _, _), atd_ty)) =
  *
  *   type ty = Foo | Bar of whatever
  *
- * we generate a class Ty implemented in Ty.java and an enum TyEnum defined
- * in a separate file TyTag.java.
+ * we generate a class Ty implemented in Ty.pgsql and an enum TyEnum defined
+ * in a separate file TyTag.pgsql.
  *)
 and trans_sum my_name env (`Sum (loc, vars, annots)) =
   let class_name = Atdj_names.to_class_name my_name in
@@ -330,15 +326,15 @@ and trans_sum my_name env (`Sum (loc, vars, annots)) =
     | `Variant (_, (atd_name, an), opt_ty) ->
         let json_name = get_json_variant_name atd_name an in
         let func_name, enum_name, field_name =
-          get_java_variant_names atd_name an in
-        let opt_java_ty =
+          get_pgsql_variant_names atd_name an in
+        let opt_pgsql_ty =
           match opt_ty with
           | None -> None
           | Some ty ->
-              let (java_ty, env) = trans_inner env (unwrap_option env ty) in
-              Some (ty, java_ty)
+              let (pgsql_ty, env) = trans_inner env (unwrap_option env ty) in
+              Some (ty, pgsql_ty)
         in
-        (json_name, func_name, enum_name, field_name, opt_java_ty)
+        (json_name, func_name, enum_name, field_name, opt_pgsql_ty)
     | `Inherit _ -> assert false
   ) vars
   in
@@ -393,15 +389,15 @@ public class %s {
     if (tag.equals(\"%s\"))
       t = Tag.%s;
     else"
-               json_name (* TODO: java-string-escape this *)
+               json_name (* TODO: pgsql-string-escape this *)
                enum_name
 
-         | Some (atd_ty, java_ty) ->
+         | Some (atd_ty, pgsql_ty) ->
              let src = sprintf "((JSONArray)o).%s(1)" (get env atd_ty false) in
              let set_value =
                assign env
                  (Some ("field_" ^ field_name)) src
-                 java_ty atd_ty "      "
+                 pgsql_ty atd_ty "      "
              in
              fprintf out " \
     if (tag.equals(\"%s\")) {
@@ -409,7 +405,7 @@ public class %s {
       t = Tag.%s;
     }
     else"
-               json_name (* TODO: java-string-escape this *)
+               json_name (* TODO: pgsql-string-escape this *)
                set_value
                enum_name
        ) l
@@ -426,7 +422,7 @@ public class %s {
 "
           func_name
           enum_name;
-    | Some (atd_ty, java_ty) ->
+    | Some (atd_ty, pgsql_ty) ->
         fprintf out "
   %s field_%s = null;
   public void set%s(%s x) {
@@ -441,11 +437,11 @@ public class %s {
       return null;
   }
 "
-          java_ty field_name
-          func_name java_ty
+          pgsql_ty field_name
+          func_name pgsql_ty
           enum_name
           field_name
-          java_ty func_name
+          pgsql_ty func_name
           enum_name
           field_name;
   ) cases;
@@ -478,7 +474,7 @@ public class %s {
         _out.append(\"\\\"%s\\\"\");
         break;"
                enum_name
-               json_name (* TODO: java-string-escape *)
+               json_name (* TODO: pgsql-string-escape *)
 
          | Some (atd_ty, _) ->
              fprintf out "
@@ -508,46 +504,32 @@ and trans_record my_name env (`Record (loc, fields, annots)) =
     )
     fields in
   (* Translate field types *)
-  let (java_tys, env) = List.fold_left
-    (fun (java_tys, env) -> function
+  let (pgsql_tys, env) = List.fold_left
+    (fun (pgsql_tys, env) -> function
        | `Field (_, (field_name, _, annots), atd_ty) ->
-           let field_name = get_java_field_name field_name annots in
-           let (java_ty, env) = trans_inner env (unwrap_option env atd_ty) in
-           ((field_name, java_ty) :: java_tys, env)
+           let field_name = get_pgsql_field_name field_name annots in
+           let (pgsql_ty, env) = trans_inner env (unwrap_option env atd_ty) in
+           ((field_name, pgsql_ty) :: pgsql_tys, env)
     )
     ([], env) fields in
-  let java_tys = List.rev java_tys in
+  let pgsql_tys = List.rev pgsql_tys in
   (* Output Java class *)
   let class_name = Atdj_names.to_class_name my_name in
   let out = open_class env class_name in
   (* Javadoc *)
-  output_string out (javadoc loc annots "");
+  output_string out (pgsqldoc loc annots "");
   fprintf out "\
-public class %s implements Atdj {
-  /**
-   * Construct from a fresh record with null fields.
-   */
-  public %s() {
-  }
-
-  /**
-   * Construct from a JSON string.
-   */
-  public %s(String s) throws JSONException {
-    this(new JSONObject(s));
-  }
-
-  %s(JSONObject jo) throws JSONException {
-"
-    class_name
-    class_name
+        Create Table %s (
+                id%s Serial Primary Key,
+                
+  "
     class_name
     class_name;
 
-  let env = List.fold_left
+(*  let env = List.fold_left
     (fun env (`Field (loc, (field_name, _, annots), _) as field) ->
-      let field_name = get_java_field_name field_name annots in
-      let cmd = assign_field env field (List.assoc field_name java_tys) in
+      let field_name = get_pgsql_field_name field_name annots in
+      let cmd = assign_field env field (List.assoc field_name pgsql_tys) in
       fprintf out "%s" cmd;
       env
     )
@@ -571,14 +553,14 @@ public class %s implements Atdj {
        List.iter (fun field ->
          output_string out (to_string_field env field)
        ) l;
-    ) fields;
+    ) fields;*)
 
   List.iter
     (function `Field (loc, (field_name, _, annots), _) ->
-      let field_name = get_java_field_name field_name annots in
-      let java_ty = List.assoc field_name java_tys in
-      output_string out (javadoc loc annots "  ");
-      fprintf out "  public %s %s;\n" java_ty field_name)
+      let field_name = get_pgsql_field_name field_name annots in
+      let pgsql_ty = List.assoc field_name pgsql_tys in
+      output_string out (pgsqldoc loc annots "  ");
+      fprintf out " %s %s,\n" field_name pgsql_ty )
     fields;
   fprintf out "}\n";
   close_out out;
@@ -597,5 +579,5 @@ and trans_inner env atd_ty =
       )
   | `List (_, sub_atd_ty, _)  ->
       let (ty', env) = trans_inner env sub_atd_ty in
-      ("java.util.ArrayList<" ^ ty' ^ ">", env)
+      ( ty' ^ "[]", env)
   | x -> type_not_supported x

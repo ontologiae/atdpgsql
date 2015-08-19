@@ -14,7 +14,8 @@ type sample_sum = [
 ]
 
 (* Record *)
-type complex_record = {
+type complex_record <sql req="select from where"> = {
+ 
   b <doc text="foo bar baz"> : bool;
   i : int;
   s : string;
