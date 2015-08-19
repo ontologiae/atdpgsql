@@ -28,12 +28,12 @@ let to_camel_case s =
  * underscores and capitalise any character that is immediately following
  * an underscore or digit.  We also capitalise the initial character
  * e.g. "foo_bar42baz" becomes "FooBar42Baz". *)
-let to_class_name str =
+let to_sql_name str =
   match str with
-    | "string" -> "String"
+    | "string" -> "Text"
     | "int"    -> "Integer"
     | "bool"   -> "Boolean"
-    | "float"  -> "Double"
+    | "float"  -> "Double Precision"
     | _ -> to_camel_case str
 
 let pgsql_keywords = [

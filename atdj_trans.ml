@@ -292,12 +292,21 @@ let pgsqldoc loc annots indent =
  * value upon access.
  *)
 
-let open_class env cname =
-  let out = open_out (env.package_dir ^ "/" ^ cname ^ ".pgsql") in
+let open_sql env cname =
+  let out = open_out (env.package_dir ^ "/" ^ cname ^ ".sql") in
   fprintf out "\
 // Entête génération SQL
 ";
   out
+
+let open_ml env cname =
+  let out = open_out (env.package_dir ^ "/" ^ cname ^ ".ml") in
+  fprintf out "\
+// Entête génération SQL
+";
+  out
+
+
 
 let rec trans_module env items = List.fold_left trans_outer env items
 
@@ -320,7 +329,7 @@ and trans_outer env (`Type (_, (name, _, _), atd_ty)) =
  * in a separate file TyTag.pgsql.
  *)
 and trans_sum my_name env (`Sum (loc, vars, annots)) =
-  let class_name = Atdj_names.to_class_name my_name in
+  let class_name = Atdj_names.to_sql_name my_name in
 
   let cases = List.map (function
     | `Variant (_, (atd_name, an), opt_ty) ->
@@ -341,7 +350,7 @@ and trans_sum my_name env (`Sum (loc, vars, annots)) =
 
   let tags = List.map (fun (_, _, enum_name, _, _) -> enum_name) cases in
 
-  let out = open_class env class_name in
+  let out = open_sql env class_name in
 
   fprintf out "\
 /**
@@ -514,17 +523,17 @@ and trans_record my_name env (`Record (loc, fields, annots)) =
     ([], env) fields in
   let pgsql_tys = List.rev pgsql_tys in
   (* Output Java class *)
-  let class_name = Atdj_names.to_class_name my_name in
-  let out = open_class env class_name in
+  let sql_name = Atdj_names.to_sql_name my_name in
+  let sqlout = open_sql env sql_name in
+  let mlout  = open_ml  env sql_name in 
   (* Javadoc *)
-  output_string out (pgsqldoc loc annots "");
-  fprintf out "\
-        Create Table %s (
-                id%s Serial Primary Key,
-                
-  "
-    class_name
-    class_name;
+  output_string sqlout (pgsqldoc loc annots "");
+  fprintf sqlout 
+  "Create Table %s (
+      id%s Serial Primary Key,
+      "
+    sql_name
+    sql_name;
 
 (*  let env = List.fold_left
     (fun env (`Field (loc, (field_name, _, annots), _) as field) ->
@@ -559,11 +568,11 @@ and trans_record my_name env (`Record (loc, fields, annots)) =
     (function `Field (loc, (field_name, _, annots), _) ->
       let field_name = get_pgsql_field_name field_name annots in
       let pgsql_ty = List.assoc field_name pgsql_tys in
-      output_string out (pgsqldoc loc annots "  ");
-      fprintf out " %s %s,\n" field_name pgsql_ty )
+      output_string sqlout (pgsqldoc loc annots "  ");
+      fprintf sqlout " %s %s,\n" field_name pgsql_ty )
     fields;
-  fprintf out "}\n";
-  close_out out;
+  fprintf sqlout "}\n";
+  close_out sqlout;
   env
 
 (* Translate an `inner' type i.e. a type that occurs within a record or sum *)
@@ -573,9 +582,9 @@ and trans_inner env atd_ty =
       (match norm_ty env atd_ty with
          | `Name (_, (_, name2, _), _) ->
              (* It's a primitive type e.g. int *)
-             (Atdj_names.to_class_name name2, env)
+             (Atdj_names.to_sql_name name2, env)
          | _ ->
-             (Atdj_names.to_class_name name1, env)
+             (Atdj_names.to_sql_name name1, env)
       )
   | `List (_, sub_atd_ty, _)  ->
       let (ty', env) = trans_inner env sub_atd_ty in

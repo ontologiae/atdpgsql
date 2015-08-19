@@ -4,12 +4,12 @@ open Printf
 open Atdj_env
 
 let output_atdj env =
-  let out = Atdj_trans.open_class env "Atdj" in
+  let out = Atdj_trans.open_sql env "Atdj" in
   fprintf out "";
   close_out out
 
 let output_util env =
-  let out = Atdj_trans.open_class env "Util" in
+  let out = Atdj_trans.open_sql env "Util" in
   fprintf out "\
 class Util {
   // Extract the tag of sum-typed value
