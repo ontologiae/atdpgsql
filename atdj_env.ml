@@ -7,8 +7,8 @@ type ty_name = string
 type ty =
   [ `Class of ty_name * (id * ty_name) list
       (* Class name and constructor parameters *)
-  | `Interface of ty_name
-      (* Interface name *)
+  | `DefType of ty_name * (id * ty_name) list
+      (* Type definition *)
   ]
 
 type env_t = {
