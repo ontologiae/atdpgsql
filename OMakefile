@@ -10,7 +10,7 @@ FILES[] =
   atdj_main
 
 OCAMLFLAGS = -dtypes -g
-OCAMLPACKS = str unix atd atdgen
+OCAMLPACKS = str batteries unix atd atdgen
 
 CLASSPATH = '.:json.jar:junit-4.8.2.jar'
 
