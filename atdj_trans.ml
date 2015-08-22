@@ -542,18 +542,32 @@ public class %s {
  * within the class.
  *)
 
-
 and trans_record my_name env (`Record (loc, fields, annots)) =
          (* Construction des liste de champs
          * Remove `Inherit values *)
         let _ =  L.length !dep_dict.recs |> string_of_int |> prerr_endline in 
-        let fields = L.map
-        (function
-                | `Field _ as f -> f
-                | `Inherit _ -> assert false
-    )
-        fields in
+        let fields = L.map (function
+                                | `Field _ as f -> f
+                                | `Inherit _ -> assert false
+                           )
+                     fields in
         (* Translate field types : préparation des nom, pour n'avoir ensuite qu'à les inliner*)
+
+
+        let name_a_list_type_for_sql ty =
+                match ty with
+                | `Name (_, (_, name2, _), _) ->  
+                                (match name2 with
+                                | "bool" | "int" | "float" | "string" | "abstract" -> name2
+                                | _ -> (try
+                                        let x = List.assoc name2 env.module_items in
+                                        (*Type existant défini dans le fichier*)
+                                        "Integer[]"
+                                with Not_found ->
+                                        Atd_ast.error_at loc ("Warning: unknown type "^name2^" %s\n%!")
+                                        )
+                                )
+                | _ -> failwith "liste de autre chose qu'un type" in
 
         let rec name_a_type_for_sql ty =
                match  ty with
@@ -561,111 +575,40 @@ and trans_record my_name env (`Record (loc, fields, annots)) =
                                 (* It's a primitive type e.g. int *)
                                    Atdj_names.to_sql_name name1
                 | `List (loc, sub_atd_ty, _)  -> (* Est-ce une liste d'un type builtin, ou une liste d'un type défini dans le fichier ATD ?*)
-                                (
-                                        match sub_atd_ty with
-                                        | `Name (_, (_, name2, _), _) ->  
-                                                        match name2 with
-                                                        | "bool" | "int" | "float" | "string" | "abstract" -> name2
-                                                        | _ -> (try
-                                                                                let x = List.assoc name2 env.module_items in
-                                                                                (*Type existant défini dans le fichier*)
-                                                                                "Integer[]"
-                                                                           with Not_found ->
-                                                                                Atd_ast.error_at loc ("Warning: unknown type "^name2^" %s\n%!")
-                                                                )
-                                )
+                                name_a_list_type_for_sql sub_atd_ty
                 | `Option (_, atd_ty, _) -> name_a_type_for_sql atd_ty
                 | `Record (_,_,_) -> failwith "Cas Record non géré : record dans une table : on fabrique un type ?"
                 | `Tuple  (_,_,_) -> failwith "Cas Tuple non géré : Tuple dans une table, inliner ?"
-                | _ -> failwith "cas non géré" in
+                | _ -> failwith "name_a_type_for_sql : cas non géré" in
 
 
-
-     (*   let (pgsql_tys, env) = L.fold_left
-        (fun (pgsql_tys, env) -> function
-                | `Field (_, (field_name, _, annots), atd_ty) ->
-                                let field_name = get_pgsql_field_name field_name annots in
-                                let (pgsql_ty, env) = trans_inner env (unwrap_option env atd_ty) in
-                                ((field_name, pgsql_ty) :: pgsql_tys, env)
-                                )
-        ([], env) fields in
-
-        let pgsql_tys = L.rev pgsql_tys in
-        (* Output Java class *)*)
+            (* Output sql and ML file *)
         let sql_name = Atdj_names.to_sql_name my_name in
         let sqlout = open_sql env sql_name in
         let mlout  = open_ml  env sql_name in
 
-        let field_to_string_for_sql (`Field (_, (field_name, _, annots), atd_ty)) = 
+        let field_to_string_for_sql fin (`Field (_, (field_name, _, annots), atd_ty)) = 
                 let field_name = get_pgsql_field_name field_name annots in
                 let pgsql_ty   =  name_a_type_for_sql atd_ty in
-                let _ = L.iter prerr_endline !dep_dict.recs in 
-                let _ = prerr_endline pgsql_ty in 
+                let virgule    = if fin then "" else "," in
+                (*let _ = L.iter prerr_endline !dep_dict.recs in 
+                let _ = prerr_endline pgsql_ty in *)
                 match L.exists (S.starts_with pgsql_ty) !dep_dict.recs with
-                | false -> fprintf sqlout " %s %s,\n" field_name pgsql_ty
-                | true  -> fprintf sqlout " %s %s,--foreign key %s" field_name "Integer" pgsql_ty in
+                | false -> fprintf sqlout ("\t%s %s%s\n") field_name pgsql_ty virgule
+                | true  -> fprintf sqlout ("\t%s %s%s--foreign key %s\n") field_name "Integer" virgule pgsql_ty in
 
         (*GÉNÉRATION*)
-        let _ = output_string sqlout (pgsqldoc loc annots "");
+        let _ = output_string sqlout (pgsqldoc loc annots "") in
         let _ = fprintf sqlout 
-        "Create Table %s (
-                id%s Serial Primary Key,
-                " sql_name sql_name in
+        "Create Table %s (\n\tid%s Serial Primary Key,\n" sql_name sql_name in
 
 
-
-
-
-(*
-        let trans_genere_table (`Field (loc, (field_name, _, annots), _)) =
-                let field_name = get_pgsql_field_name field_name annots in
-                let pgsql_ty = L.assoc field_name pgsql_tys in
-                let _ = L.iter prerr_endline !dep_dict.recs in 
-                let _ = prerr_endline pgsql_ty in 
-                match L.exists (S.starts_with pgsql_ty) !dep_dict.recs with
-                                | false -> fprintf sqlout " %s %s,\n" field_name pgsql_ty
-                                | true  -> fprintf sqlout " %s %s,--foreign key %s" field_name "Integer" pgsql_ty in
-        output_string sqlout (pgsqldoc loc annots "");
-        fprintf sqlout 
-        "Create Table %s (
-                id%s Serial Primary Key,
-                "
-                sql_name
-                sql_name;
-
-                (*  let env = L.fold_left
-                (fun env (`Field (loc, (field_name, _, annots), _) as field) ->
-                        let field_name = get_pgsql_field_name field_name annots in
-let cmd = assign_field env field (List.assoc field_name pgsql_tys) in
-fprintf out "%s" cmd;
-env
-    )
-    env fields in
-fprintf out "\n  \
-}
-
-  public void toJsonBuffer(StringBuilder _out) throws JSONException {
-          boolean _isFirst = true;
-          _out.append(\"{\");%a
-          _out.append(\"}\");
-  }
-
-  public String toJson() throws JSONException {
-          StringBuilder out = new StringBuilder(128);
-          toJsonBuffer(out);
-          return out.toString();
-  }
-"
-(fun out l ->
-        L.iter (fun field ->
-                output_string out (to_string_field env field)
-       ) l;
-    ) fields;*)*)
-
-                L.iter field_to_string_for_sql fields;
-                fprintf sqlout "\n}\n";
+        let _ = L.take ((L.length fields ) -1) fields |> L.iter (field_to_string_for_sql false) in
+        let _ = L.last fields |> field_to_string_for_sql true in
+        let _ = fprintf sqlout "\n}\n" in
                 close_out sqlout;
                 env
+
 
                 (* Translate an `inner' type i.e. a type that occurs within a record or sum *)
 and trans_inner env atd_ty =
