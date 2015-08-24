@@ -317,6 +317,11 @@ type depending_pass = {
                 sums : (string * Atd_ast.variant list) list;
 }
 
+type fromWhat =
+        | FromNothing
+        | FromList
+        | FromOption
+
 let dep_dict = ref {recs = [] ; sums = []};;
 
 let rec trans_module env items =
@@ -337,7 +342,7 @@ let rec trans_module env items =
 and depending_pass_op   dep_struct  (`Type (_, (name, _, _), atd_ty)) =
         match unwrap atd_ty with
         | `Sum (_, vl, _) ->  { dep_struct with sums = (Atdj_names.to_sql_name name,vl)::dep_struct.sums; }
-        | `Record _ as r  ->  { dep_struct with recs = (Atdj_names.to_sql_name name)::dep_struct.recs; }
+        | `Record _   ->  { dep_struct with recs = (Atdj_names.to_sql_name name)::dep_struct.recs; }
         | `Name (_, (_, name, _), _) -> dep_struct
         | x -> type_not_supported x
 
@@ -347,8 +352,8 @@ and trans_outer env (`Type (_, (name, _, _), atd_ty)) =
   match unwrap atd_ty with
     | `Sum _ as s ->
         trans_sum name env s
-    | `Record _ as r ->
-        trans_record name env r
+    | `Record _ as r -> let _ = trans_record_sql name env r in
+                        trans_record_ml name env r
     | `Name (_, (_, name, _), _) ->
         (* Don't translate primitive types at the top-level 
          * Donc inclus les types date*)
@@ -541,18 +546,126 @@ public class %s {
 (* Translate a record into a pgsql definition file AND a ml file to create, save, get .  Each record field becomes a field
  * within the class.
  *)
+and trans_record_ml my_name env (`Record (loc, fields, annots)) = 
+        (* TODO
+         * INSERT INTO %s(%s) VALUES ( %s ) RETURNING %s, %s;
+         * 1. Liste des noms de champs SQL, 2 fois
+         * 2. Liste des champs, à partir du newline, converti en chaines, en fonction du type, la conversion est différente
+         *  String : quote
+         *  Date   : idem
+         *  Array  : genre '{{1,2,3},{4,5,6},{7,8,9}}'
+         *  Option : Null si None
+         *  Tuple  : '{1,2,3}'
+         *  id = L.hd line |> int_of_string; label = L.at line 1
+         *
+         *  Faire une fonction séparée, pour pouvoir choisir
+         *  Faire un type FromNothing | FromList | FromOption pour pouvoir faire une seule fonction qui traite tous les cas
+         *
+         *
+         * type table3 = {
+	l3 : string;
+	d  : date;
+	t  : timestamp;
+	n3 : int;
+	f3 : float;
+	b3 : bool;
+	fk : table2 list ;
+        fk2 : table1 list;
+}
+         *
+         *  DANS LE INSERT VALUES:
+                 *  quote newline.l3, quote newline.date, quote newline.t, string_of_int n3, string_of_float f3, string_of_bool b3, L.map (fun t -> t.idTable2) fk), fk.idTable1
+         *
+         * DANS l'hydratation de la structure en retour
+         * { idTable3 = L.hd line |> int_of_string ; l3 = L.at line 1 ; d =  L.at line 2 |> float_of_string ; t =  L.at line 3 |> float_of_string ; 
+         *   n3 = d =  L.at line 4 |> int_of_string ; f3 = L.at line 5 |> float_of_string ; b3 = L.at line 6 |> bool_of_string ;
+         *   Et là ? : on créé un env ? }
+         * *)
+  let fields = L.map (function
+          | `Field _ as f -> f
+          | `Inherit _ -> assert false
+                           )
+  fields in
+  let rec name_a_field_for_ml fromwhat ty =
+          let by_type_for_insert fromWhat ty =
+                  (*TODO : gérer le fromWhat*)
+                  match ty with
+                  | "bool"    -> ""
+                  | "int"     -> ""
+                  | "float"   -> ""
+                  | "string"  -> "quote"
+                  | "date"    -> "quote"
+                  | "timestamp" -> "quote"
+                  | "char"    -> "quote"
+                  | s -> (match fromWhat with 
+                                | FromList -> "Gérer conversion ids tablecible vers INTEGER[]--Chercher dans env|"^s (*failwith "by_type Gérer le fait d'aller chercher l'id" *)
+                                | _ -> if L.exists (fun (n,_) -> n=s)  env.module_items then s^".id"^(Atdj_names.to_sql_name s)
+                                               else "by_type : N'est pas un type primitif:"^s |> failwith
+                         )
+                     in
+           let by_type_for_return fromWhat ty =
+                    match ty with
+                                | "bool"    -> if fromWhat = FromList then "Aie !! Utiliser S.nsplit \"8,9,76,67\" ~by:\",\";;" else "string_of_bool"
+                                | "int"     -> if fromWhat = FromList then "Aie !! Utiliser S.nsplit \"8,9,76,67\" ~by:\",\";;" else "string_of_int"
+                                | "float"   -> if fromWhat = FromList then "Aie !! Utiliser S.nsplit \"8,9,76,67\" ~by:\",\";;" else "string_of_float"
+                                | "string"  -> if fromWhat = FromList then "Aie !! Utiliser S.nsplit \"8,9,76,67\" ~by:\",\";;" else ""
+                                | "date"    -> if fromWhat = FromList then "Aie !! Utiliser S.nsplit \"8,9,76,67\" ~by:\",\";;" else "string_of_float"
+                                | "timestamp"    -> if fromWhat = FromList then "Aie !! Utiliser S.nsplit \"8,9,76,67\" ~by:\",\";;" else "string_of_float"
+                                | s -> (match fromWhat with 
+                                        | FromList ->  "\"{\"^ (String.concat \",\" " (*failwith "by_type Gérer le fait d'aller chercher l'id" *)
+                                        | _ -> if L.exists (fun (n,_) -> n=s)  env.module_items then s^".id"^(Atdj_names.to_sql_name s)
+                                               else "by_type : N'est pas un type primitif:"^s |> failwith
+                                        )
+           in
+                match  ty with
+                | `Name (_, (_, name1, _), _) -> (by_type_for_return fromwhat name1),( by_type_for_insert fromwhat name1)
+                | `List (loc, sub_atd_ty, _)  -> (* Est-ce une liste d'un type builtin, ou une liste d'un type défini dans le fichier ATD ?*)
+                                name_a_field_for_ml FromList sub_atd_ty
+                | `Option (_, atd_ty, _) -> name_a_field_for_ml FromOption atd_ty
+                | `Record (_,_,_) -> failwith "Cas Record non géré : record dans une table : on fabrique un type ?"
+                | `Tuple  (_,_,_) -> failwith "Cas Tuple non géré : Tuple dans une table, inliner ?"
+                | _ -> failwith "name_a_type_for_sql : cas non géré" in
 
-and trans_record my_name env (`Record (loc, fields, annots)) =
+  let rec name_a_type_for_ml  ty =
+                match  ty with
+                | `Name (_, (_, name1, _), _) -> Atdj_names.to_sql_name name1
+                | `List (loc, sub_atd_ty, _)  -> (* Est-ce une liste d'un type builtin, ou une liste d'un type défini dans le fichier ATD ?*)
+                                name_a_type_for_ml sub_atd_ty
+                | `Option (_, atd_ty, _) -> name_a_type_for_ml atd_ty
+                | `Record (_,_,_) -> failwith "Cas Record non géré : record dans une table : on fabrique un type ?"
+                | `Tuple  (_,_,_) -> failwith "Cas Tuple non géré : Tuple dans une table, inliner ?"
+                | _ -> failwith "name_a_type_for_sql : cas non géré" in
+  let field_to_string_for_ml (`Field (_, (field_name, _, annots), atd_ty)) =
+          let ret,insrt=  name_a_field_for_ml FromNothing atd_ty in
+          field_name,name_a_type_for_ml atd_ty, ret, insrt in
+  let quadrupletList = L.map field_to_string_for_ml fields  in
+  let rec split4 l =
+          match l with
+          | [] -> [],[],[],[]
+          | (g,h,j,k)::[] -> [g],[h],[j],[k]
+          | (g,h,j,k)::q ->  let l,m,n,o = split4 q in g::l, h::m, j::n, k::o in
+   let fieldNames,typeNames,convertToStrings,d = L.map field_to_string_for_ml fields |> split4  in 
+ (*  let _ = L.iter prerr_string fieldNames ; prerr_endline "/fieldNames" in
+   let _ = L.iter prerr_string typeNames ; prerr_endline "/typeNames"  in
+   let _ = L.iter prerr_string convertToStrings ; prerr_endline "/convertToStrings" in
+   let _ = L.iter prerr_string d ; prerr_endline "" in*)
+   let _ = S.concat "," fieldNames |> prerr_endline in
+   let _ = S.concat "," typeNames |> prerr_endline in
+   let _ = L.map (fun (f,_,c,_) -> c^" line."^f ) quadrupletList |> S.concat ", "  |> prerr_endline in
+
+   
+
+  env
+and trans_record_sql my_name env (`Record (loc, fields, annots)) =
          (* Construction des liste de champs
          * Remove `Inherit values *)
-        let _ =  L.length !dep_dict.recs |> string_of_int |> prerr_endline in 
+        (*let _ =  L.length !dep_dict.recs |> string_of_int |> prerr_endline in *)
         let fields = L.map (function
                                 | `Field _ as f -> f
                                 | `Inherit _ -> assert false
                            )
                      fields in
         (* Translate field types : préparation des nom, pour n'avoir ensuite qu'à les inliner*)
-
 
         let name_a_list_type_for_sql ty =
                 match ty with

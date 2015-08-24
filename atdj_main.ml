@@ -79,12 +79,12 @@ let main () =
 
   (* Generate classes from ATD definition *)
   let env = Atdj_trans.trans_module env atd_module in
-
+()
   (* Output helper classes *)
  (* Atdj_helper.output_util env;*)
-  Atdj_helper.output_atdj env;
+(*  Atdj_helper.output_atdj env;
 
-  Atdj_helper.output_package_javadoc env atd_head
+  Atdj_helper.output_package_javadoc env atd_head*)
 
 
 let () =
