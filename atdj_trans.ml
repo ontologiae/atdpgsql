@@ -3,7 +3,6 @@ open Atdj_names
 open Atdj_env
 open Atdj_util
 
-
 module L = BatList
 
 module S = BatString
@@ -310,6 +309,18 @@ let open_ml env cname =
 // Entête génération SQL
 ";
   out
+
+
+let ml_create_model isSave req params structAff =
+        let name = if isSave then "save" else "create" in
+        Printf.sprintf
+        "let quote s = \"'\"^s^\"'\"
+
+       let %s (request_service : string -> string list -> string list list) line =
+        let req  = Printf.sprintf \"%s\" %s in
+        let lines = request_service req [] in
+        let ret  = L.hd lines in
+        { %s }" name req params structAff;;  
 
 
 type depending_pass = {
@@ -637,24 +648,28 @@ and trans_record_ml my_name env (`Record (loc, fields, annots)) =
           | List   s      -> failwith "TODO : Gestion des listes de type builtin => Reprendre le cas List (DefinedType s) " in
   let makeGetters cpt (f,t) =
           match t with
-          | Float         -> "List.nth line."^f^" "^(string_of_int cpt)^" |> float_of_string"
-          | Int           -> "List.nth line."^f^" "^(string_of_int cpt)^" |> float_of_string"
-          | String        -> "List.nth line."^f^" "^(string_of_int cpt)^" |> float_of_string"
-          | Date          -> "List.nth line."^f^" "^(string_of_int cpt)^" |> float_of_string"
-          | TimeStamp     -> "List.nth line."^f^" "^(string_of_int cpt)^" |> float_of_string"
-          | Char          -> "String.get (List.nth line."^f^" "^(string_of_int cpt)^") 0"
-          | Bool          -> "List.nth line."^f^" "^(string_of_int cpt)^" |> float_of_string"
+          | Float         -> "List.nth ret "^(string_of_int cpt)^" |> float_of_string"
+          | Int           -> "List.nth ret "^(string_of_int cpt)^" |> int_of_string"
+          | String        -> "List.nth ret "^(string_of_int cpt)^" "
+          | Date          -> "List.nth ret "^(string_of_int cpt)^" |> float_of_string"
+          | TimeStamp     -> "List.nth ret "^(string_of_int cpt)^" |> float_of_string"
+          | Char          -> "String.get (List.nth ret "^(string_of_int cpt)^") 0"
+          | Bool          -> "List.nth ret "^(string_of_int cpt)^" |> bool_of_string"
           | DefinedType s -> "Bon là falloir chercher dans env..."
           (* Cas à la con*)
           | List (DefinedType s) -> "Bon là falloir chercher dans env..."
-          | Option s      -> "Some line."^f (*TODO : écrire un test*)
+          | Option s      -> "Some ret."^f (*TODO : écrire un test*)
           | List   s      -> failwith "Gestion des listes de type builtin" in
   let valuesStr         = L.map  makeValues upletList |> S.concat "^\", \"^ " in
-  let valuesGetters     = L.mapi makeGetters upletList |> S.concat ", " in
+  let valuesGetters     = L.mapi (fun i -> (fun (f,t) -> f^" = "^( makeGetters i (f,t)))) upletList |> S.concat "; " in
+  let valuesUpdate      = L.map  (fun (f,t) -> f^" = "^(makeValues (f,t))) upletList |> S.concat "^\", \"^ " in
   let names             = L.map (fun (f,t) -> f) upletList |> S.concat ", "  in
-  let req = Printf.sprintf "\"INSERT INTO %s(%s) VALUES (\"^ %s ^\" ) RETURNING %s;\"" my_name names valuesStr names  in (*TODO : gérer les quotes*)
-  let _ = prerr_endline req in
-  let _ = prerr_endline valuesGetters; prerr_endline "" in
+  let reqInser = Printf.sprintf "INSERT INTO %s(%s) VALUES (\"^ %s ^\" ) RETURNING %s;" my_name names valuesStr names  in 
+  let reqUpdat = Printf.sprintf "UPDATE %s SET %s WHERE %s = %s RETURNING %s;" my_name valuesUpdate "TODOID" "TODOIDNum" names in
+  let codeSave = ml_create_model false reqInser "" valuesGetters in
+  let codeUpda = ml_create_model true reqUpdat "" valuesGetters in 
+  let _ = prerr_endline codeSave; prerr_endline "" in
+  let _ = prerr_endline codeUpda; prerr_endline ""; prerr_endline ""; in
   env
 and trans_record_sql my_name env (`Record (loc, fields, annots)) =
          (* Construction des liste de champs

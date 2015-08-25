@@ -9,16 +9,6 @@ let output_atdj env =
   close_out out
 
 
-let ml_create_model isSave req params structAff =
-        let name = if isSave then "save" else "create" in
-        Printf.sprintf
-      "let quote s = \"'\"^s^\"'\"
-
-       let %s request_service newline =
-        let req  = Printf.sprintf \"%s\" %s in
-        let lines = request_service req [] in
-        let line  = L.hd lines in
-        { %s }" name req params structAff;;  
 
 
 let output_util env =
