@@ -634,7 +634,7 @@ and trans_record_ml my_name env (`Record (loc, fields, annots)) =
           (* Cas à la con*)
           | List (DefinedType s) -> "\"'{\"^ (L.map (fun i -> i.id"^s^" |> string_of_int) line."^f^" |> String.concat \",\" )^\"}'\""
           | Option s      -> "match line."^f^" with | None -> \"NULL\" | Some s -> s"
-          | List   s      -> failwith "Gestion des listes de type builtin" in
+          | List   s      -> failwith "TODO : Gestion des listes de type builtin => Reprendre le cas List (DefinedType s) " in
   let makeGetters cpt (f,t) =
           match t with
           | Float         -> "List.nth line."^f^" "^(string_of_int cpt)^" |> float_of_string"
