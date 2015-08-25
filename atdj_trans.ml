@@ -322,6 +322,19 @@ type fromWhat =
         | FromList
         | FromOption
 
+
+type simplifiedType =
+        | String
+        | Int
+        | Float
+        | Char
+        | Bool
+        | Date
+        | TimeStamp
+        | DefinedType of string
+        | Option of simplifiedType
+        | List   of simplifiedType
+
 let dep_dict = ref {recs = [] ; sums = []};;
 
 let rec trans_module env items =
@@ -586,75 +599,61 @@ and trans_record_ml my_name env (`Record (loc, fields, annots)) =
           | `Inherit _ -> assert false
                            )
   fields in
-  let rec name_a_field_for_ml fromwhat ty =
-          let by_type_for_insert fromWhat ty =
-                  (*TODO : gérer le fromWhat*)
-                  match ty with
-                  | "bool"    -> ""
-                  | "int"     -> ""
-                  | "float"   -> ""
-                  | "string"  -> "quote"
-                  | "date"    -> "quote"
-                  | "timestamp" -> "quote"
-                  | "char"    -> "quote"
-                  | s -> (match fromWhat with 
-                                | FromList -> "Gérer conversion ids tablecible vers INTEGER[]--Chercher dans env|"^s (*failwith "by_type Gérer le fait d'aller chercher l'id" *)
-                                | _ -> if L.exists (fun (n,_) -> n=s)  env.module_items then s^".id"^(Atdj_names.to_sql_name s)
-                                               else "by_type : N'est pas un type primitif:"^s |> failwith
-                         )
-                     in
-           let by_type_for_return fromWhat ty =
-                    match ty with
-                                | "bool"    -> if fromWhat = FromList then "Aie !! Utiliser S.nsplit \"8,9,76,67\" ~by:\",\";;" else "string_of_bool"
-                                | "int"     -> if fromWhat = FromList then "Aie !! Utiliser S.nsplit \"8,9,76,67\" ~by:\",\";;" else "string_of_int"
-                                | "float"   -> if fromWhat = FromList then "Aie !! Utiliser S.nsplit \"8,9,76,67\" ~by:\",\";;" else "string_of_float"
-                                | "string"  -> if fromWhat = FromList then "Aie !! Utiliser S.nsplit \"8,9,76,67\" ~by:\",\";;" else ""
-                                | "date"    -> if fromWhat = FromList then "Aie !! Utiliser S.nsplit \"8,9,76,67\" ~by:\",\";;" else "string_of_float"
-                                | "timestamp"    -> if fromWhat = FromList then "Aie !! Utiliser S.nsplit \"8,9,76,67\" ~by:\",\";;" else "string_of_float"
-                                | s -> (match fromWhat with 
-                                        | FromList ->  "\"{\"^ (String.concat \",\" " (*failwith "by_type Gérer le fait d'aller chercher l'id" *)
-                                        | _ -> if L.exists (fun (n,_) -> n=s)  env.module_items then s^".id"^(Atdj_names.to_sql_name s)
-                                               else "by_type : N'est pas un type primitif:"^s |> failwith
-                                        )
-           in
-                match  ty with
-                | `Name (_, (_, name1, _), _) -> (by_type_for_return fromwhat name1),( by_type_for_insert fromwhat name1)
-                | `List (loc, sub_atd_ty, _)  -> (* Est-ce une liste d'un type builtin, ou une liste d'un type défini dans le fichier ATD ?*)
-                                name_a_field_for_ml FromList sub_atd_ty
-                | `Option (_, atd_ty, _) -> name_a_field_for_ml FromOption atd_ty
+  let rec find_type  ty =
+          match  ty with
+                | `Name (_, (_, name1, _), _) -> ( 
+                        match name1 with
+                        | "bool"    -> Bool
+                        | "int"     -> Int
+                        | "float"   -> Float
+                        | "string"  -> String
+                        | "date"    -> Date
+                        | "timestamp" -> TimeStamp
+                        | "char"    -> Char
+                        | x         -> if L.exists (fun (n,_) -> n=x)  env.module_items then DefinedType x else "cas non géré : "^x |> failwith 
+                        )
+                | `List (loc, sub_atd_ty, _)  -> List (find_type sub_atd_ty)
+                | `Option (_, atd_ty, _)      -> Option (find_type atd_ty)
                 | `Record (_,_,_) -> failwith "Cas Record non géré : record dans une table : on fabrique un type ?"
                 | `Tuple  (_,_,_) -> failwith "Cas Tuple non géré : Tuple dans une table, inliner ?"
                 | _ -> failwith "name_a_type_for_sql : cas non géré" in
 
-  let rec name_a_type_for_ml  ty =
-                match  ty with
-                | `Name (_, (_, name1, _), _) -> Atdj_names.to_sql_name name1
-                | `List (loc, sub_atd_ty, _)  -> (* Est-ce une liste d'un type builtin, ou une liste d'un type défini dans le fichier ATD ?*)
-                                name_a_type_for_ml sub_atd_ty
-                | `Option (_, atd_ty, _) -> name_a_type_for_ml atd_ty
-                | `Record (_,_,_) -> failwith "Cas Record non géré : record dans une table : on fabrique un type ?"
-                | `Tuple  (_,_,_) -> failwith "Cas Tuple non géré : Tuple dans une table, inliner ?"
-                | _ -> failwith "name_a_type_for_sql : cas non géré" in
   let field_to_string_for_ml (`Field (_, (field_name, _, annots), atd_ty)) =
-          let ret,insrt=  name_a_field_for_ml FromNothing atd_ty in
-          field_name,name_a_type_for_ml atd_ty, ret, insrt in
-  let quadrupletList = L.map field_to_string_for_ml fields  in
-  let rec split4 l =
-          match l with
-          | [] -> [],[],[],[]
-          | (g,h,j,k)::[] -> [g],[h],[j],[k]
-          | (g,h,j,k)::q ->  let l,m,n,o = split4 q in g::l, h::m, j::n, k::o in
-   let fieldNames,typeNames,convertToStrings,d = L.map field_to_string_for_ml fields |> split4  in 
- (*  let _ = L.iter prerr_string fieldNames ; prerr_endline "/fieldNames" in
-   let _ = L.iter prerr_string typeNames ; prerr_endline "/typeNames"  in
-   let _ = L.iter prerr_string convertToStrings ; prerr_endline "/convertToStrings" in
-   let _ = L.iter prerr_string d ; prerr_endline "" in*)
-   let _ = S.concat "," fieldNames |> prerr_endline in
-   let _ = S.concat "," typeNames |> prerr_endline in
-   let _ = L.map (fun (f,_,c,_) -> c^" line."^f ) quadrupletList |> S.concat ", "  |> prerr_endline in
-
-   
-
+       field_name, find_type atd_ty
+  in
+  let upletList = L.map field_to_string_for_ml fields  in
+  let makeValues (f,t) =
+          match t with
+          | Float         -> "string_of_float line."^f
+          | Int           -> "string_of_int line."^f
+          | String        ->  "line."^f
+          | Date          -> "string_of_float line."^f
+          | TimeStamp     -> "string_of_float line."^f
+          | Char          -> "String.make 1 line."^f
+          | Bool          -> "string_of_bool line."^f
+          | DefinedType s -> "string_of_int line."^f^".id"^s
+          (* Cas à la con*)
+          | List (DefinedType s) -> "\"{\"^ (L.map (fun i -> i.id"^s^" |> string_of_int) line."^f^" |> String.concat \",\" )^\"}\""
+          | Option s      -> "match line."^f^" with | None -> \"NULL\" | Some s -> s"
+          | List   s      -> failwith "Gestion des listes de type builtin" in
+  let makeGetters cpt (f,t) =
+          match t with
+          | Float         -> "List.nth line."^f^" "^(string_of_int cpt)^" |> float_of_string"
+          | Int           -> "List.nth line."^f^" "^(string_of_int cpt)^" |> float_of_string"
+          | String        -> "List.nth line."^f^" "^(string_of_int cpt)^" |> float_of_string"
+          | Date          -> "List.nth line."^f^" "^(string_of_int cpt)^" |> float_of_string"
+          | TimeStamp     -> "List.nth line."^f^" "^(string_of_int cpt)^" |> float_of_string"
+          | Char          -> "String.get (List.nth line."^f^" "^(string_of_int cpt)^") 0"
+          | Bool          -> "List.nth line."^f^" "^(string_of_int cpt)^" |> float_of_string"
+          | DefinedType s -> "Bon là falloir chercher dans env..."
+          (* Cas à la con*)
+          | List (DefinedType s) -> "Bon là falloir chercher dans env..."
+          | Option s      -> "Some line."^f (*TODO : écrire un test*)
+          | List   s      -> failwith "Gestion des listes de type builtin" in
+  let valuesStr = L.map  makeValues upletList |> S.concat ", " in
+  let valuesGetters = L.mapi makeGetters upletList |> S.concat ", " in
+  let _ = prerr_endline valuesStr in
+  let _ = prerr_endline valuesGetters; prerr_endline "" in
   env
 and trans_record_sql my_name env (`Record (loc, fields, annots)) =
          (* Construction des liste de champs
