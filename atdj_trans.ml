@@ -630,9 +630,9 @@ and trans_record_ml my_name env (`Record (loc, fields, annots)) =
           | Date | TimeStamp     -> "\"'\"^(string_of_float line."^f^")^\"'\""
           | Char          -> "String.make 1 line."^f
           | Bool          -> "string_of_bool line."^f
-          | DefinedType s -> "string_of_int line."^f^".id"^s
+          | DefinedType s -> "string_of_int line."^f^".id"^( Atdj_names.to_sql_name s)
           (* Cas à la con*)
-          | List (DefinedType s) -> "\"'{\"^ (L.map (fun i -> i.id"^s^" |> string_of_int) line."^f^" |> String.concat \",\" )^\"}'\""
+          | List (DefinedType s) -> "\"'{\"^ (L.map (fun i -> i.id"^(Atdj_names.to_sql_name s)^" |> string_of_int) line."^f^" |> String.concat \",\" )^\"}'\""
           | Option s      -> "match line."^f^" with | None -> \"NULL\" | Some s -> s"
           | List   s      -> failwith "TODO : Gestion des listes de type builtin => Reprendre le cas List (DefinedType s) " in
   let makeGetters cpt (f,t) =
