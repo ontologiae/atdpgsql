@@ -626,14 +626,13 @@ and trans_record_ml my_name env (`Record (loc, fields, annots)) =
           match t with
           | Float         -> "string_of_float line."^f
           | Int           -> "string_of_int line."^f
-          | String        ->  "line."^f
-          | Date          -> "string_of_float line."^f
-          | TimeStamp     -> "string_of_float line."^f
+          | String        ->  "\"'\"^line."^f^"^\"'\""
+          | Date | TimeStamp     -> "\"'\"^(string_of_float line."^f^")^\"'\""
           | Char          -> "String.make 1 line."^f
           | Bool          -> "string_of_bool line."^f
           | DefinedType s -> "string_of_int line."^f^".id"^s
           (* Cas à la con*)
-          | List (DefinedType s) -> "\"{\"^ (L.map (fun i -> i.id"^s^" |> string_of_int) line."^f^" |> String.concat \",\" )^\"}\""
+          | List (DefinedType s) -> "\"'{\"^ (L.map (fun i -> i.id"^s^" |> string_of_int) line."^f^" |> String.concat \",\" )^\"}'\""
           | Option s      -> "match line."^f^" with | None -> \"NULL\" | Some s -> s"
           | List   s      -> failwith "Gestion des listes de type builtin" in
   let makeGetters cpt (f,t) =
@@ -650,10 +649,10 @@ and trans_record_ml my_name env (`Record (loc, fields, annots)) =
           | List (DefinedType s) -> "Bon là falloir chercher dans env..."
           | Option s      -> "Some line."^f (*TODO : écrire un test*)
           | List   s      -> failwith "Gestion des listes de type builtin" in
-  let valuesStr         = L.map  makeValues upletList |> S.concat ", " in
+  let valuesStr         = L.map  makeValues upletList |> S.concat "^\", \"^ " in
   let valuesGetters     = L.mapi makeGetters upletList |> S.concat ", " in
   let names             = L.map (fun (f,t) -> f) upletList |> S.concat ", "  in
-  let req = Printf.sprintf "Printf.sprintf \"INSERT INTO %s(%s) VALUES ( %%s ) RETURNING %s;\" \"%s\"" my_name names  names valuesStr in
+  let req = Printf.sprintf "\"INSERT INTO %s(%s) VALUES (\"^ %s ^\" ) RETURNING %s;\"" my_name names valuesStr names  in (*TODO : gérer les quotes*)
   let _ = prerr_endline req in
   let _ = prerr_endline valuesGetters; prerr_endline "" in
   env
