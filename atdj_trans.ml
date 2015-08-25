@@ -7,6 +7,7 @@ module L = BatList
 
 module S = BatString
 
+module O = BatOption
 (* Calculate the JSON representation of an ATD type.
  *
  * Values of sum types t are encoded as either Strings or two-element
@@ -239,28 +240,33 @@ let pgsqldoc loc annots indent =
 let open_sql env cname =
   let out = open_out (env.package_dir ^ "/" ^ cname ^ ".sql") in
   fprintf out "\
-// Entête génération SQL
+-- Entête génération SQL
 ";
   out
 
 let open_ml env cname =
   let out = open_out (env.package_dir ^ "/" ^ cname ^ ".ml") in
   fprintf out "\
-// Entête génération SQL
+(* Entête génération ML *)
+type date = float;;
+type timestamp = float
+let quote s = \"'\"^s^\"'\";;
+
 ";
   out
 
+let reopen_file env cname ext =
+  open_out_gen [Open_wronly; Open_append] 0o600 (env.package_dir ^ "/" ^ cname ^ "." ^ ext)
 
-let ml_create_model isUpd req params structAff =
-        let name = if isUpd then "save" else "create" in
+
+let ml_create_model isUpd nom req params structAff =
+        let name = if isUpd then "save"^nom else "create"^nom in
         Printf.sprintf
-        "let quote s = \"'\"^s^\"'\"
-
-       let %s (request_service : string -> string list -> string list list) line =
+        "let %s (request_service : string -> string list -> string list list) line =
         let req  = Printf.sprintf \"%s\" %s in
         let lines = request_service req [] in
-        let ret  = L.hd lines in
-        { %s }" name req params structAff;;  
+        let ret  = List.hd lines in
+        { %s }\n" name req params structAff;;  
 
 
 type depending_pass = {
@@ -289,10 +295,14 @@ type simplifiedType =
 let dep_dict = ref {recs = [] ; sums = []};;
 
 let rec trans_module env items =
+        (* Création des fichiers de génération*)
+        let file_prefix =  Filename.chop_suffix (O.get env.input_file |>  Filename.basename) ".atd" in
+        let outml,outsql = open_ml env file_prefix, open_sql env file_prefix in
+        let _ = close_out outml; close_out outsql in
         let _ = dep_dict :=  (List.fold_left depending_pass_op (!dep_dict) items)  in 
       (*  let _ = L.length dep_dict.recs |> string_of_int |> prerr_endline in
         let _ = L.iter prerr_endline dep_dict.recs in*)
-        L.fold_left trans_outer env items
+        L.fold_left trans_outer  env items
         (*
  * TODO : Ici, ajouter un depending pass, qui va nous informer :
          * Des types sommes à transformer en définition de type, pour le moment
@@ -312,12 +322,12 @@ and depending_pass_op   dep_struct  (`Type (_, (name, _, _), atd_ty)) =
 
 
 
-and trans_outer env (`Type (_, (name, _, _), atd_ty)) =
+and trans_outer  env (`Type (_, (name, _, _), atd_ty)) =
   match unwrap atd_ty with
     | `Sum _ as s ->
         trans_sum name env s
-    | `Record _ as r -> let _ = trans_record_sql name env r in
-                        trans_record_ml name env r
+    | `Record _ as r -> let _ = trans_record_sql  name env r in
+                        trans_record_ml  name env r
     | `Name (_, (_, name, _), _) ->
         (* Don't translate primitive types at the top-level 
          * Donc inclus les types date*)
@@ -340,7 +350,7 @@ and trans_sum my_name env (`Sum (loc, vars, annots)) =
 (* Translate a record into a pgsql definition file AND a ml file to create, save, get .  Each record field becomes a field
  * within the class.
  *)
-and trans_record_ml my_name env (`Record (loc, fields, annots)) = 
+and trans_record_ml  my_name env (`Record (loc, fields, annots)) = 
         (* TODO
          * INSERT INTO %s(%s) VALUES ( %s ) RETURNING %s, %s;
          * 1. Liste des noms de champs SQL, 2 fois
@@ -375,7 +385,9 @@ and trans_record_ml my_name env (`Record (loc, fields, annots)) =
          *   n3 = d =  L.at line 4 |> int_of_string ; f3 = L.at line 5 |> float_of_string ; b3 = L.at line 6 |> bool_of_string ;
          *   Et là ? : on créé un env ? }
          * *)
-  let fields = L.map (function
+ let file_prefix =  Filename.chop_suffix (O.get env.input_file |>  Filename.basename) ".atd" in
+ let mlout = reopen_file env file_prefix "ml" in
+ let fields = L.map (function
           | `Field _ as f -> f
           | `Inherit _ -> assert false
                            )
@@ -411,9 +423,9 @@ and trans_record_ml my_name env (`Record (loc, fields, annots)) =
           | Date | TimeStamp     -> "\"'\"^(string_of_float line."^f^")^\"'\""
           | Char          -> "String.make 1 line."^f
           | Bool          -> "string_of_bool line."^f
-          | DefinedType s -> "string_of_int line."^f^".id"^( Atdj_names.to_sql_name s)
+          | DefinedType s -> "string_of_int line."^f^".id"^s
           (* Cas à la con*)
-          | List (DefinedType s) -> "\"'{\"^ (L.map (fun i -> i.id"^(Atdj_names.to_sql_name s)^" |> string_of_int) line."^f^" |> String.concat \",\" )^\"}'\""
+          | List (DefinedType s) -> "\"'{\"^ (List.map (fun i -> i.id"^s^" |> string_of_int) line."^f^" |> String.concat \",\" )^\"}'\""
           | Option s      -> "match line."^f^" with | None -> \"NULL\" | Some s -> s"
           | List   s      -> failwith "TODO : Gestion des listes de type builtin => Reprendre le cas List (DefinedType s) " in
   let makeGetters cpt (f,t) =
@@ -425,9 +437,9 @@ and trans_record_ml my_name env (`Record (loc, fields, annots)) =
           | TimeStamp     -> "List.nth ret "^(string_of_int cpt)^" |> float_of_string"
           | Char          -> "String.get (List.nth ret "^(string_of_int cpt)^") 0"
           | Bool          -> "List.nth ret "^(string_of_int cpt)^" |> bool_of_string"
-          | DefinedType s -> "Bon là falloir chercher dans env..."
+          | DefinedType s -> "line."^f
           (* Cas à la con*)
-          | List (DefinedType s) -> "Bon là falloir chercher dans env..."
+          | List (DefinedType s) -> "line."^f
           | Option s      -> "Some ret."^f (*TODO : écrire un test*)
           | List   s      -> failwith "Gestion des listes de type builtin" in
   let valuesStr         = L.map  makeValues upletList |> S.concat "^\", \"^ " in
@@ -436,17 +448,38 @@ and trans_record_ml my_name env (`Record (loc, fields, annots)) =
   let valuesUpdate      = L.map  (fun (f,t) -> "\""^f^" = \"^"^(makeValues (f,t))) upletList |> S.concat "^\", \"^ " in
   let valuesGettersUpd  = "line with "^valuesGetters in
   let names             = L.map (fun (f,t) -> f) upletList |> S.concat ", "  in
-  let reqInser = Printf.sprintf "INSERT INTO %s(%s) VALUES (\"^ %s ^\" ) RETURNING %s;" my_name names valuesStr names  in 
-  let reqUpdat = Printf.sprintf "UPDATE %s SET \"^ %s  ^\" WHERE %s = %s RETURNING %s;" my_name valuesUpdate "TODOID" "TODOIDNum" names in
-  let codeCrea = ml_create_model false reqInser "" valuesGettersCrea in
-  let codeUpda = ml_create_model true reqUpdat "" valuesGettersUpd in 
-  let _ = prerr_endline codeCrea; prerr_endline "" in
-  let _ = prerr_endline codeUpda; prerr_endline ""; prerr_endline ""; in
+  let reqInser = Printf.sprintf "INSERT INTO %s(%s) VALUES (\"^ %s ^\" ) RETURNING %s,%s;" my_name names valuesStr ("id"^my_name) names  in 
+  let reqUpdat = Printf.sprintf "UPDATE %s SET \"^ %s  ^\" WHERE %s = \"^%s^\" RETURNING %s;" my_name valuesUpdate ("id"^my_name) ("string_of_int line.id"^my_name) names in
+  let codeCrea = ml_create_model false (Atdj_names.to_camel_case my_name) reqInser "" valuesGettersCrea in
+  let codeUpda = ml_create_model true (Atdj_names.to_camel_case my_name) reqUpdat "" valuesGettersUpd in 
+
+  (*TODO : génération des types AVEC IDs*)
+  let entet             = "type "^my_name^" = {" in
+  let rec typename  t   = match  t with
+          | Float         -> "float"
+          | Int           -> "int"
+          | String        -> "string"
+          | Date          -> "date"
+          | TimeStamp     -> "timestamp"
+          | Char          -> "char"
+          | Bool          -> "bool"
+          | DefinedType s -> s
+          | List  s       -> (typename s)^" list"
+          | Option s      -> (typename s)^" option" in
+  let typId             = "id"^my_name^" : int;" in
+  let contentTyp        = L.map (fun (f,t) -> "\t"^f^" : "^(typename t)^";") upletList in
+  let defTypeStr        = S.concat "\n" contentTyp in
+  let _ = fprintf mlout "%s\n\t%s\n%s\n}\n"  entet typId defTypeStr in
+  let _ = fprintf mlout "%s\n\n" codeCrea in
+  let _ = fprintf mlout "%s\n\n\n" codeUpda  in
+  close_out mlout;
   env
-and trans_record_sql my_name env (`Record (loc, fields, annots)) =
+and trans_record_sql  my_name env (`Record (loc, fields, annots)) =
          (* Construction des liste de champs
          * Remove `Inherit values *)
         (*let _ =  L.length !dep_dict.recs |> string_of_int |> prerr_endline in *)
+        let file_prefix =  Filename.chop_suffix (O.get env.input_file |>  Filename.basename) ".atd" in
+        let sqlout = reopen_file env file_prefix "sql" in
         let fields = L.map (function
                                 | `Field _ as f -> f
                                 | `Inherit _ -> assert false
@@ -484,8 +517,6 @@ and trans_record_sql my_name env (`Record (loc, fields, annots)) =
 
             (* Output sql and ML file *)
         let sql_name = Atdj_names.to_sql_name my_name in
-        let sqlout = open_sql env sql_name in
-        let mlout  = open_ml  env sql_name in
 
         let field_to_string_for_sql fin (`Field (_, (field_name, _, annots), atd_ty)) = 
                 let field_name = get_pgsql_field_name field_name annots in

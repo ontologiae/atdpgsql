@@ -9,35 +9,7 @@ let output_atdj env =
   close_out out
 
 
-
-
-let output_util env =
-  let out = Atdj_trans.open_sql env "Util" in
-  fprintf out "\
-class Util {
-  // Extract the tag of sum-typed value
-  static String extractTag(Object value) throws JSONException {
-    if (value instanceof String)
-      return (String)value;
-    else if (value instanceof JSONArray)
-      return ((JSONArray)value).getString(0);
-    else throw new JSONException(\"Cannot extract type\");
-  }
-
-  // Is an option value a none?
-  static boolean isNone(Object value) throws JSONException {
-    return (value instanceof String) && (((String)value).equals(\"None\"));
-  }
-
-  // Is an option value a Some?
-  static boolean isSome(Object value) throws JSONException {
-    return (value instanceof JSONArray)
-      && ((JSONArray)value).getString(0).equals(\"Some\");
-  }
-
-";
-  close_out out
-
+(*
 let output_package_javadoc env (loc, annots) =
   let out = open_out (env.package_dir ^ "/" ^ "package.html") in
   output_string out "<body>\n";
@@ -68,3 +40,4 @@ let output_package_javadoc env (loc, annots) =
   );
   output_string out "\n</body>";
   close_out out
+  *)

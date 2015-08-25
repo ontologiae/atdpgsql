@@ -76,15 +76,13 @@ let main () =
 
   (* Create package directories *)
   let env = { env with package_dir = make_package_dirs env.package } in
+  let file_prefix = 
+          let base = Filename.basename input_file in
+          Filename.chop_suffix base ".atd" in
 
   (* Generate classes from ATD definition *)
-  let env = Atdj_trans.trans_module env atd_module in
+  let env = Atdj_trans.trans_module env  atd_module in
 ()
-  (* Output helper classes *)
- (* Atdj_helper.output_util env;*)
-(*  Atdj_helper.output_atdj env;
-
-  Atdj_helper.output_package_javadoc env atd_head*)
 
 
 let () =
