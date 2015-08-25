@@ -178,66 +178,6 @@ let assign_field env
     ^ opt_set_default
 
 
-(* Generate a toJsonBuffer command *)
-let rec to_string env id atd_ty indent =
-  let atd_ty = norm_ty env atd_ty in
-  match atd_ty with
-    | `List (_, atd_sub_ty, _) ->
-          sprintf "%s_out.append(\"[\");\n" indent
-        ^ sprintf "%sfor (int i = 0; i < %s.size(); ++i) {\n" indent id
-        ^ to_string env (id ^ ".get(i)") atd_sub_ty (indent ^ "  ")
-        ^ sprintf "%s  if (i < %s.size() - 1)\n" indent id
-        ^ sprintf "%s    _out.append(\",\");\n" indent
-        ^ sprintf "%s}\n" indent
-        ^ sprintf "%s_out.append(\"]\");\n" indent
-    | `Name (_, (_, "string", _), _) ->
-        (* TODO Check that this is the correct behaviour *)
-        sprintf
-          "%sUtil.writeJsonString(_out, %s);\n"
-          indent id
-    | `Name _ ->
-        sprintf "%s_out.append(String.valueOf(%s));\n" indent id
-    | _ ->
-        sprintf "%s%s.toJsonBuffer(_out);\n" indent id
-
-(* Generate a toJsonBuffer command for a record field. *)
-let to_string_field env = function
-  | (`Field (loc, (atd_field_name, kind, annots), atd_ty)) ->
-      let json_field_name = get_json_field_name atd_field_name annots in
-      let field_name = get_pgsql_field_name atd_field_name annots in
-      let atd_ty = norm_ty ~unwrap_option:true env atd_ty in
-      (* In the case of an optional field, create a predicate to test whether
-       * the field has its default value. *)
-      let if_part =
-        sprintf "
-    if (%s != null) {
-      if (_isFirst)
-        _isFirst = false;
-      else
-        _out.append(\",\");
-      _out.append(\"\\\"%s\\\":\");
-%s    }
-"
-          field_name
-          json_field_name
-          (to_string env field_name atd_ty "      ")
-      in
-      let else_part =
-        let is_opt =
-          match kind with
-            | `Optional | `With_default -> true
-            | `Required -> false in
-        if is_opt then
-          ""
-        else
-          sprintf "    \
-    else
-      throw new JSONException(\"Uninitialized field %s\");
-"
-            field_name
-      in
-      if_part ^ else_part
-
 (* Generate a pgsqldoc comment *)
 let pgsqldoc loc annots indent =
   let from_inline_text text = indent ^ " * " ^ text ^ "\n" in
@@ -311,8 +251,8 @@ let open_ml env cname =
   out
 
 
-let ml_create_model isSave req params structAff =
-        let name = if isSave then "save" else "create" in
+let ml_create_model isUpd req params structAff =
+        let name = if isUpd then "save" else "create" in
         Printf.sprintf
         "let quote s = \"'\"^s^\"'\"
 
@@ -392,176 +332,6 @@ and trans_outer env (`Type (_, (name, _, _), atd_ty)) =
  * in a separate file TyTag.pgsql.
  *)
 and trans_sum my_name env (`Sum (loc, vars, annots)) =
-  let class_name = Atdj_names.to_sql_name my_name in
-
-  let cases = L.map (function
-    | `Variant (_, (atd_name, an), opt_ty) ->
-        let json_name = get_json_variant_name atd_name an in
-        let func_name, enum_name, field_name =
-          get_pgsql_variant_names atd_name an in
-        let opt_pgsql_ty =
-          match opt_ty with
-          | None -> None
-          | Some ty ->
-              let (pgsql_ty, env) = trans_inner env (unwrap_option env ty) in
-              Some (ty, pgsql_ty)
-        in
-        (json_name, func_name, enum_name, field_name, opt_pgsql_ty)
-    | `Inherit _ -> assert false
-  ) vars
-  in
-
-  let tags = L.map (fun (_, _, enum_name, _, _) -> enum_name) cases in
-
-  let out = open_sql env class_name in
-
-  fprintf out "\
-/**
- * Construct objects of type %s.
- */
-
-public class %s {
-  Tag t = null;
-
-  public %s() {
-  }
-
-  public Tag tag() {
-    return t;
-  }
-"
-    my_name
-    class_name
-    class_name;
-
-  fprintf out "
-  /**
-   * Define tags for sum type %s.
-   */
-  public enum Tag {
-    %s
-  }
-"
-    my_name
-    (String.concat ", " tags);
-
-  fprintf out "
-  public %s(Object o) throws JSONException {
-    String tag = Util.extractTag(o);
-   %a
-      throw new JSONException(\"Invalid tag: \" + tag);
-  }
-"
-    class_name
-    (fun out l ->
-       L.iter (fun (json_name, func_name, enum_name, field_name, opt_ty) ->
-         match opt_ty with
-         | None ->
-             fprintf out " \
-    if (tag.equals(\"%s\"))
-      t = Tag.%s;
-    else"
-               json_name (* TODO: pgsql-string-escape this *)
-               enum_name
-
-         | Some (atd_ty, pgsql_ty) ->
-             let src = sprintf "((JSONArray)o).%s(1)" (get env atd_ty false) in
-             let set_value =
-               assign env
-                 (Some ("field_" ^ field_name)) src
-                 pgsql_ty atd_ty "      "
-             in
-             fprintf out " \
-    if (tag.equals(\"%s\")) {
-%s
-      t = Tag.%s;
-    }
-    else"
-               json_name (* TODO: pgsql-string-escape this *)
-               set_value
-               enum_name
-       ) l
-  ) cases;
-
-  L.iter (fun (_, func_name, enum_name, field_name, opt_ty) ->
-    match opt_ty with
-    | None ->
-        fprintf out "
-  public void set%s() {
-    /* TODO: clear previously-set field and avoid memory leak */
-    t = Tag.%s;
-  }
-"
-          func_name
-          enum_name;
-    | Some (atd_ty, pgsql_ty) ->
-        fprintf out "
-  %s field_%s = null;
-  public void set%s(%s x) {
-    /* TODO: clear previously-set field in order to avoid memory leak */
-    t = Tag.%s;
-    field_%s = x;
-  }
-  public %s get%s() {
-    if (t == Tag.%s)
-      return field_%s;
-    else
-      return null;
-  }
-"
-          pgsql_ty field_name
-          func_name pgsql_ty
-          enum_name
-          field_name
-          pgsql_ty func_name
-          enum_name
-          field_name;
-  ) cases;
-
-  fprintf out "
-  public void toJsonBuffer(StringBuilder _out) throws JSONException {
-    if (t == null)
-      throw new JSONException(\"Uninitialized %s\");
-    else {
-      switch(t) {%a
-      default:
-        break; /* unused; keeps compiler happy */
-      }
-    }
-  }
-
-  public String toJson() throws JSONException {
-    StringBuilder out = new StringBuilder(128);
-    toJsonBuffer(out);
-    return out.toString();
-  }
-"
-    class_name
-    (fun out l ->
-       L.iter (fun (json_name, func_name, enum_name, field_name, opt_ty) ->
-         match opt_ty with
-         | None ->
-             fprintf out "
-      case %s:
-        _out.append(\"\\\"%s\\\"\");
-        break;"
-               enum_name
-               json_name (* TODO: pgsql-string-escape *)
-
-         | Some (atd_ty, _) ->
-             fprintf out "
-      case %s:
-         _out.append(\"[\\\"%s\\\",\");
-%s         _out.append(\"]\");
-         break;"
-             enum_name
-             json_name
-             (to_string env ("field_" ^ field_name) atd_ty "         ")
-       ) l
-    ) cases;
-
-  fprintf out "}\n";
-  close_out out;
   env
 
 
@@ -661,14 +431,16 @@ and trans_record_ml my_name env (`Record (loc, fields, annots)) =
           | Option s      -> "Some ret."^f (*TODO : écrire un test*)
           | List   s      -> failwith "Gestion des listes de type builtin" in
   let valuesStr         = L.map  makeValues upletList |> S.concat "^\", \"^ " in
-  let valuesGetters     = L.mapi (fun i -> (fun (f,t) -> f^" = "^( makeGetters i (f,t)))) upletList |> S.concat "; " in
-  let valuesUpdate      = L.map  (fun (f,t) -> f^" = "^(makeValues (f,t))) upletList |> S.concat "^\", \"^ " in
+  let valuesGetters     = L.mapi (fun i -> (fun (f,t) -> f^" = "^( makeGetters (i+1) (f,t)))) upletList |> S.concat "; " in
+  let valuesGettersCrea = "  id"^my_name^" = "^(makeGetters  0 ("id"^(Atdj_names.to_sql_name my_name),Int))^" ; "^valuesGetters in
+  let valuesUpdate      = L.map  (fun (f,t) -> "\""^f^" = \"^"^(makeValues (f,t))) upletList |> S.concat "^\", \"^ " in
+  let valuesGettersUpd  = "line with "^valuesGetters in
   let names             = L.map (fun (f,t) -> f) upletList |> S.concat ", "  in
   let reqInser = Printf.sprintf "INSERT INTO %s(%s) VALUES (\"^ %s ^\" ) RETURNING %s;" my_name names valuesStr names  in 
-  let reqUpdat = Printf.sprintf "UPDATE %s SET %s WHERE %s = %s RETURNING %s;" my_name valuesUpdate "TODOID" "TODOIDNum" names in
-  let codeSave = ml_create_model false reqInser "" valuesGetters in
-  let codeUpda = ml_create_model true reqUpdat "" valuesGetters in 
-  let _ = prerr_endline codeSave; prerr_endline "" in
+  let reqUpdat = Printf.sprintf "UPDATE %s SET \"^ %s  ^\" WHERE %s = %s RETURNING %s;" my_name valuesUpdate "TODOID" "TODOIDNum" names in
+  let codeCrea = ml_create_model false reqInser "" valuesGettersCrea in
+  let codeUpda = ml_create_model true reqUpdat "" valuesGettersUpd in 
+  let _ = prerr_endline codeCrea; prerr_endline "" in
   let _ = prerr_endline codeUpda; prerr_endline ""; prerr_endline ""; in
   env
 and trans_record_sql my_name env (`Record (loc, fields, annots)) =
