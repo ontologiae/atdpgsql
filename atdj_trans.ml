@@ -650,9 +650,11 @@ and trans_record_ml my_name env (`Record (loc, fields, annots)) =
           | List (DefinedType s) -> "Bon là falloir chercher dans env..."
           | Option s      -> "Some line."^f (*TODO : écrire un test*)
           | List   s      -> failwith "Gestion des listes de type builtin" in
-  let valuesStr = L.map  makeValues upletList |> S.concat ", " in
-  let valuesGetters = L.mapi makeGetters upletList |> S.concat ", " in
-  let _ = prerr_endline valuesStr in
+  let valuesStr         = L.map  makeValues upletList |> S.concat ", " in
+  let valuesGetters     = L.mapi makeGetters upletList |> S.concat ", " in
+  let names             = L.map (fun (f,t) -> f) upletList |> S.concat ", "  in
+  let req = Printf.sprintf "Printf.sprintf \"INSERT INTO %s(%s) VALUES ( %%s ) RETURNING %s;\" \"%s\"" my_name names  names valuesStr in
+  let _ = prerr_endline req in
   let _ = prerr_endline valuesGetters; prerr_endline "" in
   env
 and trans_record_sql my_name env (`Record (loc, fields, annots)) =
