@@ -28,7 +28,7 @@ let to_camel_case s =
  * underscores and capitalise any character that is immediately following
  * an underscore or digit.  We also capitalise the initial character
  * e.g. "foo_bar42baz" becomes "FooBar42Baz". *)
-let to_sql_name str =
+let to_sql_type_name str =
   match str with
     | "string" -> "Text"
     | "int"    -> "Integer"
@@ -91,13 +91,10 @@ let is_pgsql_keyword =
 
 *)
 let get_pgsql_field_name field_name annot =
-  let field_name =
     if is_pgsql_keyword field_name then
       field_name ^ "_"
     else
       field_name
-  in
-  Atd_annot.get_field (fun s -> Some s) field_name ["pgsql"] "name" annot
 
 let get_pgsql_variant_names field_name annot =
   let lower_field_name = String.lowercase field_name in
