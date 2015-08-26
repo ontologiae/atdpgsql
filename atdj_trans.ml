@@ -99,7 +99,20 @@ type simplifiedType =
         | Option of simplifiedType
         | List   of simplifiedType
 
-let dep_dict = ref {recs = [] ; sums = []};;
+
+
+type generated = {
+        ty              : simplifiedType;
+        parentTyp       : string;
+        fieldName       : string;
+        fieldNameWCast  : string;
+        valueUpdate     : string;
+        valueInsert     : string;
+        valueGetter     : string;
+        getterId        : string;
+};;
+
+
 
 let rec trans_module env items =
         (* Création des fichiers de génération*)
@@ -223,6 +236,17 @@ and trans_record_ml  my_name env (`Record (loc, fields, annots)) =
           | Option _      -> f^" = None"
           | List _        -> f^" = []" in
 
+(*
+type generated = {
+        ty              : simplifiedType;
+        parentTyp       : name;
+        fieldName       : string;
+        fieldNameWCast  : string;
+        valueUpdate     : string;
+        valueInsert     : string;
+        valueGetter     : string;
+        getterId        : string;
+};;*)
 
 
   let valuesStr         = L.map  makeValues upletList |> S.concat "^\", \"^ " in
@@ -237,7 +261,9 @@ and trans_record_ml  my_name env (`Record (loc, fields, annots)) =
   let reqInser = Printf.sprintf "INSERT INTO %s(%s) VALUES (\"^ %s ^\" ) RETURNING id%s,%s;" my_name names valuesStr my_name names  in 
   let reqUpdat = Printf.sprintf "UPDATE %s SET \"^ %s  ^\" WHERE id%s = \"^%s^\" RETURNING %s;" my_name valuesUpdate my_name ("string_of_int line.id"^my_name) names in
   let reqSelec = Printf.sprintf "SELECT id%s, %s FROM %s WHERE id%s = %%d" my_name names my_name my_name  in
-  (*TODO : problème des tables en plus à gérer, lié avec le TODO du env*)
+  (*TODO : problème des tables en plus à gérer, lié avec le TODO du env
+   * On va tout mettre dans une grosse structure, générer toutes les structures, qui contiendront aussi fields
+   * A la fin, le code est généré*)
   let codeCrea = ml_create_model "C" (Atdj_names.to_camel_case my_name) reqInser "" valuesGettersCrea in
   let codeUpda = ml_create_model "U" (Atdj_names.to_camel_case my_name) reqUpdat "" valuesGettersUpd in 
   let codeSel  = ml_create_model "R" (S.capitalize my_name) reqSelec "id" valuesGettersCrea in
