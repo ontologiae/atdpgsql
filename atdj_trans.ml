@@ -45,9 +45,18 @@ let open_ml env cname =
   let out = open_out (env.package_dir ^ "/" ^ cname ^ ".ml") in
   fprintf out "\
 (* Entête génération ML *)
+module S = BatString;;
 type date = float;;
 type timestamp = float
 let quote s = \"'\"^s^\"'\";;
+
+(*TODO : rendre possible de ne pas utiliser Batteries*)
+let parsePgArray sl =
+     let _,g = S.replace ~str:sl ~sub:\"{\" ~by:\"\" in
+     let _,d = S.replace ~str:g ~sub:\"}\" ~by:\"\" in
+     let sl = S.nsplit d \",\" in
+     List.map (fun s -> let _,g = S.replace ~str:s ~sub:\"'\" ~by:\"\" in g) sl;;
+
 
 ";
   out
@@ -76,15 +85,6 @@ let ml_model_new_one nom structAff =
         "let new%s () = 
                 { %s }\n" nom structAff 
 
-type depending_pass = {
-                recs : string list;
-                sums : (string * Atd_ast.variant list) list;
-}
-
-type fromWhat =
-        | FromNothing
-        | FromList
-        | FromOption
 
 
 type simplifiedType =
@@ -219,6 +219,11 @@ and trans_record_ml  my_name env (`Record (loc, fields, annots)) =
                 | DefinedType s -> "line."^f
                 (* Cas à la con*)
                 | List (DefinedType s) -> "line."^f
+                | List String  -> "List.nth ret "^(string_of_int cpt)^" |> parsePgArray"
+                | List Bool    -> "List.nth ret "^(string_of_int cpt)^" |> parsePgArray |> List.map bool_of_string"
+                | List Int     -> "List.nth ret "^(string_of_int cpt)^" |> parsePgArray |> List.map int_of_string"
+                | List Float   -> "List.nth ret "^(string_of_int cpt)^" |> parsePgArray |> List.map float_of_string"
+                | List Char    -> "List.nth ret "^(string_of_int cpt)^" |> parsePgArray |> List.map (String.make 1) "
                 | Option String | Option Date | Option TimeStamp | Option (DefinedType _) -> "let s = List.nth ret "^(string_of_int cpt)^" in if s = \"\" then None else Some s" (*TODO : gérer les cas non string*)
                 | Option s      -> failwith "Cas option non géré" (*TODO : gérer les qq cas*)
                 | List   s      -> failwith "Gestion des listes de type builtin" in
@@ -230,11 +235,11 @@ and trans_record_ml  my_name env (`Record (loc, fields, annots)) =
                 | Date | TimeStamp     -> f^" = 0.0 "
                 | Char          -> f^" = 'a' "
                 | Bool          -> f^" = false "
-                | DefinedType s -> f^" = {} (*TODO*)"
+                | DefinedType s -> f^" = new"^(S.capitalize s)^"()"
                 (* Cas à la con*)
-          | List (DefinedType s) -> f^" = "
-          | Option _      -> f^" = None"
-          | List _        -> f^" = []" in
+                | List (DefinedType s) -> f^" = [new"^(S.capitalize s)^"()]"
+                | Option _      -> f^" = None"
+                | List _        -> f^" = []" in
 
 (*
 type generated = {
@@ -268,7 +273,7 @@ type generated = {
   let codeUpda = ml_create_model "U" (Atdj_names.to_camel_case my_name) reqUpdat "" valuesGettersUpd in 
   let codeSel  = ml_create_model "R" (S.capitalize my_name) reqSelec "id" valuesGettersCrea in
   let newOneLi = ("id"^my_name^" = -1")::(L.map makeInitField upletList) |> S.concat "; " in
-  let codeNew  = ml_model_new_one my_name newOneLi in
+  let codeNew  = ml_model_new_one (my_name |> S.capitalize) newOneLi in
 
   (*TODO : génération des types AVEC IDs*)
   let entet             = "type "^my_name^" = {" in
@@ -332,8 +337,6 @@ and trans_record_sql  my_name env (`Record (loc, fields, annots)) =
                                         Atd_ast.error_at loc ("Warning: unknown type "^name2^" %s\n%!")
                                                                          Atdj_names.to_sql_name name1
                *)
-
-
             (* Output sql and ML file *)
         let sql_name = Atdj_names.to_sql_type_name my_name in
 
@@ -343,7 +346,7 @@ and trans_record_sql  my_name env (`Record (loc, fields, annots)) =
                 let virgule    = if fin then "" else "," in
                 (*let _ = L.iter prerr_endline !dep_dict.recs in 
                 let _ = prerr_endline pgsql_ty in *)
-                match L.exists (S.starts_with pgsql_ty) !dep_dict.recs with
+                match L.exists ( fun (s,_) -> S.starts_with pgsql_ty s) env.module_items with
                 | false -> fprintf sqlout ("\t%s %s%s\n") field_name pgsql_ty virgule
                 | true  -> fprintf sqlout ("\t%s %s%s--foreign key %s\n") field_name "Integer" virgule pgsql_ty in
 
